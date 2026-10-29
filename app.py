@@ -1,767 +1,1257 @@
 
-import streamlit as st
-import pandas as pd
+import os
 import numpy as np
+import pandas as pd
+import streamlit as st
 from sklearn.ensemble import RandomForestClassifier
 
-# =========================================================
-# 1. PAGE CONFIGURATION
-# =========================================================
+try:
+    from groq import Groq
+except ImportError:
+    Groq = None
+
+
+# ==================================================
+# PAGE CONFIGURATION
+# ==================================================
+
 st.set_page_config(
     page_title="Predictive Churn Analyser",
-    page_icon="📊",
-    layout="wide"
+    page_icon="🌿",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
-# =========================================================
-# 2. CUSTOM MAROON AND BEIGE THEME
-# =========================================================
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
-html, body, [class*="css"], .stApp {
-    font-family: 'Inter', sans-serif !important;
-    background-color: #FDFBF7 !important;
-    color: #2D221E !important;
-}
+# ==================================================
+# GREEN GLASSMORPHISM DESIGN
+# ==================================================
 
-[data-testid="stSidebar"] {
-    background-color: #4A0000 !important;
-}
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-[data-testid="stSidebar"] * {
-    color: #FDFBF7 !important;
-}
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
+    }
 
-h1, h2, h3, h4 {
-    font-family: 'Inter', sans-serif !important;
-    font-weight: 800 !important;
-}
+    .stApp {
+        background:
+            radial-gradient(circle at 10% 5%, #153c30 0, transparent 35%),
+            radial-gradient(circle at 90% 90%, #173b2e 0, transparent 35%),
+            #081510;
+        color: #f0f7f2;
+    }
 
-h1 {
-    color: #800000 !important;
-    font-size: 2.6rem !important;
-    border-bottom: 3px solid #800000;
-    padding-bottom: 12px;
-}
+    [data-testid="stSidebar"] {
+        background: rgba(13, 35, 26, 0.96);
+        border-right: 1px solid rgba(170, 230, 190, 0.15);
+    }
 
-h2 {
-    color: #4A0000 !important;
-}
+    [data-testid="stSidebar"] * {
+        color: #e8f5ec;
+    }
 
-h3 {
-    color: #6B5B55 !important;
-}
+    h1, h2, h3 {
+        color: #f0fff4 !important;
+        font-weight: 800 !important;
+    }
 
-[data-testid="stMetricValue"] {
-    color: #800000 !important;
-    font-weight: 900 !important;
-}
+    p, label, span {
+        color: #d6e8dc;
+    }
 
-[data-testid="stMetricLabel"] {
-    color: #6B5B55 !important;
-    font-weight: 700 !important;
-}
+    div[data-testid="stMetric"] {
+        background: rgba(28, 67, 48, 0.42);
+        border: 1px solid rgba(154, 230, 174, 0.20);
+        border-radius: 16px;
+        padding: 18px;
+    }
 
-.strategy-card {
-    border-left: 5px solid #800000;
-    background-color: #FFFFFF;
-    padding: 18px;
-    border-radius: 5px;
-    margin-bottom: 14px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.04);
-}
+    div[data-testid="stMetricLabel"] {
+        color: #b8d9c4 !important;
+    }
 
-.section-card {
-    background-color: #F5EFEB;
-    border: 1px solid #E6DCD5;
-    border-radius: 8px;
-    padding: 16px;
-    margin-bottom: 12px;
-}
+    div[data-testid="stMetricValue"] {
+        color: #8ef0ad !important;
+    }
 
-.stButton > button {
-    background-color: #800000 !important;
-    color: #FFFFFF !important;
-    font-weight: 700 !important;
-    border-radius: 4px !important;
-    border: none !important;
-}
-</style>
-""", unsafe_allow_html=True)
+    .hero {
+        background: linear-gradient(
+            120deg,
+            rgba(42, 112, 75, 0.50),
+            rgba(18, 49, 35, 0.55)
+        );
+        border: 1px solid rgba(155, 240, 180, 0.22);
+        border-radius: 22px;
+        padding: 28px;
+        margin-bottom: 24px;
+    }
+
+    .hero-title {
+        font-size: 32px;
+        font-weight: 800;
+        color: #a4f4ba;
+        margin-bottom: 8px;
+    }
+
+    .hero-subtitle {
+        font-size: 15px;
+        color: #d5e9dc;
+    }
+
+    .section-heading {
+        font-size: 22px;
+        font-weight: 700;
+        color: #a4f4ba;
+        margin: 18px 0 12px;
+    }
+
+    div.stButton > button {
+        background: linear-gradient(90deg, #258653, #48bd76);
+        color: white;
+        border: none;
+        border-radius: 10px;
+        font-weight: 700;
+    }
+
+    div.stButton > button:hover {
+        background: linear-gradient(90deg, #31a765, #65d98f);
+        color: white;
+    }
+
+    .footer {
+        text-align: center;
+        color: #91b4a0;
+        font-size: 12px;
+        margin-top: 40px;
+        padding: 16px;
+        border-top: 1px solid rgba(160, 230, 180, 0.14);
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
-# =========================================================
-# 3. GENERATE DEMONSTRATION CUSTOMER DATA
-# =========================================================
-@st.cache_data
-def load_base_data():
+# ==================================================
+# CONSTANTS
+# ==================================================
+
+FEATURES = [
+    "MonthlyBilling",
+    "UsageTrendSpeed",
+    "CustomerAnnoyanceLevel",
+    "AutoRenewalTurnedOff",
+]
+
+CURRENCY = "₹"
+
+
+# ==================================================
+# HELPER FUNCTIONS
+# ==================================================
+
+def section_heading(title):
+    st.markdown(
+        f'<div class="section-heading">{title}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def metric_card(label, value, help_text=None):
+    st.metric(label=label, value=value, help=help_text)
+
+
+def make_demo_data(number_of_customers=200):
+    """Create demonstration customer data."""
+
     rng = np.random.default_rng(42)
-    n = 120
 
-    df = pd.DataFrame({
+    billing = rng.uniform(300, 5000, number_of_customers)
+    usage = rng.uniform(-1.0, 1.0, number_of_customers)
+    annoyance = rng.integers(1, 11, number_of_customers)
+    renewal_off = rng.integers(0, 2, number_of_customers)
+
+    risk_score = (
+        (usage < -0.25).astype(int) * 0.25
+        + (annoyance >= 7).astype(int) * 0.30
+        + (renewal_off == 1).astype(int) * 0.35
+        + (billing > 3500).astype(int) * 0.10
+        + rng.uniform(0, 0.25, number_of_customers)
+    )
+
+    leaving_soon = (risk_score >= 0.45).astype(int)
+
+    return pd.DataFrame({
         "CustomerID": [
-            f"CUST-{1000 + i}" for i in range(n)
+            f"CUST-{i + 1001}"
+            for i in range(number_of_customers)
         ],
         "CustomerName": [
-            f"Enterprise Partner Group {i}"
-            for i in range(n)
+            f"Customer {i + 1}"
+            for i in range(number_of_customers)
         ],
-        "MonthlyBilling": rng.uniform(
-            3000, 30000, n
-        ).round(2),
-        "PastHistoricalUsage": rng.uniform(
-            40, 100, n
-        ).round(2),
-        "CurrentRecentUsage": rng.uniform(
-            5, 95, n
-        ).round(2),
-        "TotalPastComplaints": rng.integers(
-            1, 15, n
-        ),
-        "RecentWeeklyComplaints": rng.integers(
-            0, 6, n
-        ),
-        "AutoRenewalTurnedOff": rng.choice(
-            [0, 1], n, p=[0.75, 0.25]
-        )
+        "MonthlyBilling": np.round(billing, 2),
+        "UsageTrendSpeed": np.round(usage, 2),
+        "CustomerAnnoyanceLevel": annoyance,
+        "AutoRenewalTurnedOff": renewal_off,
+        "LeavingSoon": leaving_soon,
     })
 
-    df["UsageTrendSpeed"] = (
-        df["CurrentRecentUsage"]
-        / (df["PastHistoricalUsage"] + 1)
-    ).round(2)
 
-    df["CustomerAnnoyanceLevel"] = (
-        df["RecentWeeklyComplaints"]
-        - df["TotalPastComplaints"] / 4
-    ).round(2)
+def normalise_target(series):
+    """Convert common churn labels into numeric 0/1."""
 
-    # Demonstration labels generated from simple rules.
-    df["LeavingSoon"] = (
-        (df["UsageTrendSpeed"] < 0.5)
-        | (df["AutoRenewalTurnedOff"] == 1)
-        | (df["CustomerAnnoyanceLevel"] > 1.2)
-    ).astype(int)
+    if pd.api.types.is_numeric_dtype(series):
+        numeric = pd.to_numeric(series, errors="coerce")
+
+        if set(numeric.dropna().unique()).issubset({0, 1}):
+            return numeric
+
+    positive = {
+        "1", "yes", "true", "churn", "churned",
+        "leaving", "leaving soon", "cancelled", "canceled"
+    }
+
+    negative = {
+        "0", "no", "false", "stay", "staying",
+        "active", "not churned", "retained", "not leaving"
+    }
+
+    def convert(value):
+        if pd.isna(value):
+            return np.nan
+
+        label = str(value).strip().lower()
+
+        if label in positive:
+            return 1
+
+        if label in negative:
+            return 0
+
+        return np.nan
+
+    return series.apply(convert)
+
+
+def prepare_data(raw_data):
+    """Validate customer data before model training."""
+
+    df = raw_data.copy()
+    df.columns = [str(col).strip() for col in df.columns]
+
+    if "CustomerID" not in df.columns:
+        df["CustomerID"] = [
+            f"CUST-{i + 1001}" for i in range(len(df))
+        ]
+
+    if "CustomerName" not in df.columns:
+        df["CustomerName"] = [
+            f"Customer {i + 1}" for i in range(len(df))
+        ]
+
+    missing = [
+        feature for feature in FEATURES
+        if feature not in df.columns
+    ]
+
+    if missing:
+        raise ValueError(
+            "CSV is missing required columns: "
+            + ", ".join(missing)
+        )
+
+    for feature in FEATURES:
+        df[feature] = pd.to_numeric(
+            df[feature], errors="coerce"
+        )
+
+    df = df.dropna(subset=FEATURES).copy()
+
+    if df.empty:
+        raise ValueError(
+            "No usable rows remain after checking the required numeric columns."
+        )
+
+    if "LeavingSoon" not in df.columns:
+        score = (
+            (df["UsageTrendSpeed"] < -0.25).astype(int) * 0.25
+            + (df["CustomerAnnoyanceLevel"] >= 7).astype(int) * 0.30
+            + (df["AutoRenewalTurnedOff"] == 1).astype(int) * 0.35
+            + (df["MonthlyBilling"] > 3500).astype(int) * 0.10
+        )
+
+        df["LeavingSoon"] = (score >= 0.45).astype(int)
+
+        st.warning(
+            "Your CSV has no LeavingSoon column. "
+            "Demonstration labels were created using simple rules. "
+            "They are not verified historical churn outcomes."
+        )
+
+    else:
+        before = len(df)
+
+        df["LeavingSoon"] = normalise_target(
+            df["LeavingSoon"]
+        )
+
+        df = df.dropna(subset=["LeavingSoon"]).copy()
+
+        if len(df) < before:
+            st.warning(
+                f"{before - len(df)} rows with unrecognised "
+                "LeavingSoon labels were excluded."
+            )
+
+        df["LeavingSoon"] = df["LeavingSoon"].astype(int)
+
+    if df.empty:
+        raise ValueError(
+            "No usable rows remain after preparing the churn target."
+        )
+
+    if df["LeavingSoon"].nunique() < 2:
+        raise ValueError(
+            "LeavingSoon must contain both 0 and 1 labels "
+            "to train the model."
+        )
 
     return df
 
 
-# Store data in the current Streamlit session.
-if "customer_db" not in st.session_state:
-    st.session_state.customer_db = load_base_data()
+def train_model(df):
+    """Train the Random Forest churn model."""
 
-df = st.session_state.customer_db.copy()
+    X = df[FEATURES]
+    y = df["LeavingSoon"].astype(int)
 
-FEATURE_COLUMNS = [
-    "MonthlyBilling",
-    "UsageTrendSpeed",
-    "CustomerAnnoyanceLevel",
-    "AutoRenewalTurnedOff"
-]
-
-
-# =========================================================
-# 4. HELPER FUNCTIONS
-# =========================================================
-def prepare_customer_features(customer):
-    """Build a single-row DataFrame for the model."""
-    return pd.DataFrame([{
-        "MonthlyBilling": float(
-            customer["MonthlyBilling"]
-        ),
-        "UsageTrendSpeed": float(
-            customer["UsageTrendSpeed"]
-        ),
-        "CustomerAnnoyanceLevel": float(
-            customer["CustomerAnnoyanceLevel"]
-        ),
-        "AutoRenewalTurnedOff": int(
-            customer["AutoRenewalTurnedOff"]
-        )
-    }], columns=FEATURE_COLUMNS)
-
-
-def train_model(customer_df):
-    X = customer_df[FEATURE_COLUMNS]
-    y = customer_df["LeavingSoon"]
-
-    classifier = RandomForestClassifier(
+    model = RandomForestClassifier(
         n_estimators=150,
         random_state=42,
-        class_weight="balanced"
+        class_weight="balanced",
     )
 
-    classifier.fit(X, y)
-    return classifier
+    model.fit(X, y)
 
+    probabilities = model.predict_proba(X)
+    churn_index = list(model.classes_).index(1)
 
-def get_churn_probability(classifier, customer):
-    features = prepare_customer_features(customer)
-    classes = list(classifier.classes_)
+    results = df.copy()
 
-    if 1 not in classes:
-        return 0.0
+    results["ChurnProbability"] = probabilities[:, churn_index]
 
-    churn_column = classes.index(1)
-
-    return float(
-        classifier.predict_proba(features)[0, churn_column]
-    )
-
-
-# Train the model before displaying any screen.
-model = train_model(df)
-
-
-# =========================================================
-# 5. SIDEBAR NAVIGATION
-# =========================================================
-st.sidebar.markdown("## MANAGEMENT CONTROLS")
-st.sidebar.markdown("---")
-
-screen = st.sidebar.radio(
-    "SELECT VIEW",
-    [
-        "Company Overview Dashboard",
-        "Individual Customer Health Audit",
-        "Onboard New Customer Account"
-    ]
-)
-
-st.sidebar.markdown("---")
-st.sidebar.caption("Predictive Churn Analyser")
-st.sidebar.caption(
-    f"Customer records in session: {len(df)}"
-)
-
-
-# =========================================================
-# 6. COMPANY OVERVIEW DASHBOARD
-# =========================================================
-if screen == "Company Overview Dashboard":
-
-    st.title("PREDICTIVE CHURN ANALYSER")
-    st.markdown("### Company Overview Dashboard")
-
-    st.write(
-        "Monitor customer accounts, estimated churn risk, "
-        "and monthly revenue exposure from one dashboard."
-    )
-
-    df["RiskScore"] = (
-        df.apply(
-            lambda row: get_churn_probability(model, row),
-            axis=1
-        ) * 100
+    results["ChurnProbabilityPercent"] = (
+        results["ChurnProbability"] * 100
     ).round(1)
 
-    df["RevenueExposure"] = (
-        df["RiskScore"] / 100 * df["MonthlyBilling"]
-    ).round(2)
+    results["PredictedChurn"] = (
+        results["ChurnProbability"] >= 0.50
+    ).astype(int)
 
-    total_customers = len(df)
-    total_mrr = df["MonthlyBilling"].sum()
-    total_revenue_at_risk = df["RevenueExposure"].sum()
-    high_risk_count = int(
-        (df["RiskScore"] >= 70).sum()
+    results["RiskLevel"] = results["ChurnProbability"].apply(
+        lambda p: (
+            "High" if p >= 0.65
+            else "Medium" if p >= 0.35
+            else "Low"
+        )
     )
 
-    st.header("1. Business Performance Summary")
+    return model, results
 
-    col1, col2, col3, col4 = st.columns(4)
 
-    col1.metric(
-        "Total Customers",
-        f"{total_customers:,}"
+def retention_action(row):
+    """Suggest a retention action based on customer signals."""
+
+    actions = []
+
+    if row["UsageTrendSpeed"] < -0.25:
+        actions.append(
+            "Offer a personalised re-engagement campaign"
+        )
+
+    if row["AutoRenewalTurnedOff"] == 1:
+        actions.append(
+            "Contact the customer about renewal concerns"
+        )
+
+    if row["CustomerAnnoyanceLevel"] >= 7:
+        actions.append(
+            "Arrange priority customer support"
+        )
+
+    if row["MonthlyBilling"] > 3500:
+        actions.append(
+            "Review plan value and suitable plan options"
+        )
+
+    if not actions:
+        actions.append(
+            "Maintain engagement and monitor customer activity"
+        )
+
+    return "; ".join(actions)
+
+
+def get_groq_api_key():
+    """Get the API key from environment variables or Streamlit secrets."""
+
+    key = os.getenv("GROQ_API_KEY", "")
+
+    if key:
+        return key
+
+    try:
+        return st.secrets.get("GROQ_API_KEY", "")
+    except Exception:
+        return ""
+
+
+def create_fallback_strategy(customer, signals):
+    """Generate a retention plan without the Groq API."""
+
+    risk = customer["RiskLevel"]
+    name = customer["CustomerName"]
+
+    if risk == "High":
+        priority = "Urgent: contact the customer within 24–48 hours."
+    elif risk == "Medium":
+        priority = "Contact the customer within the next week."
+    else:
+        priority = "Preventive: continue engagement and monitor changes."
+
+    signal_text = (
+        "\n".join(f"- {signal}" for signal in signals)
+        if signals
+        else "- No major warning signals were identified."
     )
 
-    col2.metric(
-        "Total Monthly Billing",
-        f"₹ {total_mrr:,.2f}"
+    return f"""## Retention plan for {name}
+
+### 1. Priority
+{priority}
+
+### 2. Signals identified
+{signal_text}
+
+### 3. Recommended actions
+1. Contact the customer through their preferred communication channel.
+2. Ask about their experience and any issues they have faced.
+3. Offer support that matches the identified problem.
+4. Explain relevant plan options without pressuring the customer.
+5. Record feedback and schedule a follow-up.
+
+### 4. Follow-up plan
+- First contact: discuss the customer's experience.
+- After 3–7 days: check whether the issue has been resolved.
+- After 30 days: review engagement and account activity.
+
+### 5. Success measures
+- Customer response rate
+- Issue resolution rate
+- Renewal or retention rate
+- Customer satisfaction feedback
+
+**Note:** This suggested plan does not guarantee that the customer will stay.
+"""
+
+
+def generate_ai_strategy(customer, signals):
+    """Generate a Groq AI plan or use a fallback strategy."""
+
+    api_key = get_groq_api_key()
+
+    if Groq is None or not api_key:
+        return (
+            create_fallback_strategy(customer, signals),
+            "Rule-based fallback",
+        )
+
+    try:
+        client = Groq(api_key=api_key)
+
+        summary = {
+            "Customer ID": str(customer["CustomerID"]),
+            "Monthly billing": float(customer["MonthlyBilling"]),
+            "Usage trend": float(customer["UsageTrendSpeed"]),
+            "Annoyance level": int(
+                customer["CustomerAnnoyanceLevel"]
+            ),
+            "Auto-renewal turned off": int(
+                customer["AutoRenewalTurnedOff"]
+            ),
+            "Predicted churn risk": (
+                f"{float(customer['ChurnProbability']) * 100:.1f}%"
+            ),
+            "Risk category": str(customer["RiskLevel"]),
+            "Signals": signals,
+        }
+
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            temperature=0.4,
+            max_tokens=1000,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a customer-retention analyst. Create a "
+                        "practical, ethical, customer-friendly plan using "
+                        "only supplied facts. Do not invent customer history, "
+                        "discounts, or outcomes. Include priority, risks, "
+                        "3–5 actions, follow-up timing, and measurable "
+                        "success indicators. Use Markdown."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Create a retention strategy for this customer:\n"
+                        + str(summary)
+                    ),
+                },
+            ],
+        )
+
+        answer = response.choices[0].message.content
+
+        if not answer:
+            raise ValueError(
+                "The AI service returned an empty response."
+            )
+
+        return answer, "Groq AI"
+
+    except Exception as error:
+        st.warning(
+            "Groq could not generate a strategy. "
+            f"A fallback plan is shown instead. Details: {error}"
+        )
+
+        return (
+            create_fallback_strategy(customer, signals),
+            "Rule-based fallback",
+        )
+
+
+# ==================================================
+# SESSION STATE
+# ==================================================
+
+if "uploaded_data" not in st.session_state:
+    st.session_state["uploaded_data"] = None
+
+if "strategy_text" not in st.session_state:
+    st.session_state["strategy_text"] = None
+
+if "strategy_source" not in st.session_state:
+    st.session_state["strategy_source"] = None
+
+if "strategy_customer_id" not in st.session_state:
+    st.session_state["strategy_customer_id"] = None
+
+
+# ==================================================
+# SIDEBAR
+# ==================================================
+
+with st.sidebar:
+    st.markdown("## 🌿 CHURN ANALYSER")
+    st.caption("Customer intelligence dashboard")
+    st.divider()
+
+    uploaded_file = st.file_uploader(
+        "Upload customer CSV",
+        type=["csv"],
     )
 
-    col3.metric(
-        "Estimated Revenue at Risk",
-        f"₹ {total_revenue_at_risk:,.2f}"
+    if uploaded_file is not None:
+        try:
+            st.session_state["uploaded_data"] = pd.read_csv(
+                uploaded_file
+            )
+            st.success("CSV uploaded successfully.")
+        except Exception as error:
+            st.error(f"Could not read the CSV: {error}")
+
+    if st.button("Use demo dataset", use_container_width=True):
+        st.session_state["uploaded_data"] = None
+        st.session_state["strategy_text"] = None
+        st.session_state["strategy_source"] = None
+        st.session_state["strategy_customer_id"] = None
+        st.rerun()
+
+    st.divider()
+
+    page = st.radio(
+        "NAVIGATION",
+        [
+            "Overview",
+            "Customer Analytics",
+            "Predict Churn",
+            "Customer Records",
+            "AI Retention Strategy",
+        ],
     )
 
-    col4.metric(
-        "High-Risk Accounts",
-        f"{high_risk_count}"
+    st.divider()
+    st.caption("Predict • Analyse • Retain")
+
+
+# ==================================================
+# LOAD DATA AND TRAIN MODEL
+# ==================================================
+
+try:
+    if st.session_state["uploaded_data"] is None:
+        raw_data = make_demo_data()
+        using_demo_data = True
+    else:
+        raw_data = st.session_state["uploaded_data"]
+        using_demo_data = False
+
+    data = prepare_data(raw_data)
+    model, results = train_model(data)
+
+except Exception as error:
+    st.error(f"Unable to prepare the dataset: {error}")
+    st.info(
+        "Check that your CSV includes MonthlyBilling, UsageTrendSpeed, "
+        "CustomerAnnoyanceLevel, and AutoRenewalTurnedOff. For training, "
+        "LeavingSoon must contain both 0 and 1 labels."
+    )
+    st.stop()
+
+
+# ==================================================
+# SHARED SUMMARY VALUES
+# ==================================================
+
+total_customers = len(results)
+
+high_risk_count = int(
+    (results["RiskLevel"] == "High").sum()
+)
+
+medium_risk_count = int(
+    (results["RiskLevel"] == "Medium").sum()
+)
+
+low_risk_count = int(
+    (results["RiskLevel"] == "Low").sum()
+)
+
+predicted_churn_count = int(
+    results["PredictedChurn"].sum()
+)
+
+average_risk = float(
+    results["ChurnProbability"].mean() * 100
+)
+
+revenue_exposure = float(
+    results.loc[
+        results["RiskLevel"] == "High",
+        "MonthlyBilling",
+    ].sum()
+)
+
+if using_demo_data:
+    st.info(
+        "You are viewing demonstration data. Upload a suitable "
+        "customer CSV to analyse your own records."
     )
 
-    st.markdown("---")
-    st.header("2. Critical Customer Priorities")
 
-    st.write(
-        "The following accounts have the highest estimated "
-        "monthly revenue exposure."
+# ==================================================
+# PAGE 1: OVERVIEW
+# ==================================================
+
+if page == "Overview":
+
+    st.markdown(
+        """
+        <div class="hero">
+            <div class="hero-title">PREDICTIVE CHURN ANALYSER</div>
+            <div class="hero-subtitle">
+                Understand customer behaviour, identify churn risk,
+                and plan proactive retention actions.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    pipeline = (
-        df.sort_values(
-            "RevenueExposure",
-            ascending=False
-        )[
+    c1, c2, c3, c4 = st.columns(4)
+
+    with c1:
+        metric_card("Total Customers", f"{total_customers:,}")
+
+    with c2:
+        metric_card("High-Risk Customers", f"{high_risk_count:,}")
+
+    with c3:
+        metric_card("Predicted Churn", f"{predicted_churn_count:,}")
+
+    with c4:
+        metric_card("Average Risk", f"{average_risk:.1f}%")
+
+    section_heading("Churn Risk Distribution")
+
+    risk_counts = results["RiskLevel"].value_counts().reindex(
+        ["Low", "Medium", "High"],
+        fill_value=0,
+    )
+
+    chart_col, info_col = st.columns([1.5, 1])
+
+    with chart_col:
+        st.bar_chart(
+            risk_counts,
+            x_label="Risk Level",
+            y_label="Customers",
+        )
+
+    with info_col:
+        st.markdown("### Risk summary")
+        st.write(f"🟢 **Low risk:** {low_risk_count}")
+        st.write(f"🟡 **Medium risk:** {medium_risk_count}")
+        st.write(f"🔴 **High risk:** {high_risk_count}")
+
+        st.markdown("### Estimated monthly billing at high risk")
+        st.subheader(f"{CURRENCY}{revenue_exposure:,.2f}")
+
+        st.caption(
+            "This is the sum of monthly billing for high-risk records, "
+            "not confirmed lost revenue."
+        )
+
+    section_heading("Customers Requiring Attention")
+
+    high_risk_customers = results[
+        results["RiskLevel"] == "High"
+    ].copy()
+
+    if not high_risk_customers.empty:
+
+        high_risk_customers["SuggestedAction"] = (
+            high_risk_customers.apply(retention_action, axis=1)
+        )
+
+        # Corrected sorting: use the column that actually exists.
+        high_risk_customers = high_risk_customers.sort_values(
+            "ChurnProbabilityPercent",
+            ascending=False,
+        )
+
+        st.dataframe(
+            high_risk_customers[
+                [
+                    "CustomerID",
+                    "CustomerName",
+                    "MonthlyBilling",
+                    "ChurnProbabilityPercent",
+                    "RiskLevel",
+                    "SuggestedAction",
+                ]
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    else:
+        st.success(
+            "No high-risk customers were identified by the current model."
+        )
+
+
+# ==================================================
+# PAGE 2: CUSTOMER ANALYTICS
+# ==================================================
+
+elif page == "Customer Analytics":
+
+    st.markdown(
+        """
+        <div class="hero">
+            <div class="hero-title">CUSTOMER ANALYTICS</div>
+            <div class="hero-subtitle">
+                Explore billing, engagement signals, and churn-risk patterns.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    section_heading("Customer Risk Breakdown")
+
+    risk_counts = results["RiskLevel"].value_counts().reindex(
+        ["Low", "Medium", "High"],
+        fill_value=0,
+    )
+
+    st.bar_chart(
+        risk_counts,
+        x_label="Risk Level",
+        y_label="Customers",
+    )
+
+    left, right = st.columns(2)
+
+    with left:
+        section_heading("Monthly Billing")
+        st.bar_chart(
+            results.set_index("CustomerID")["MonthlyBilling"],
+            x_label="Customer ID",
+            y_label="Monthly billing",
+        )
+
+    with right:
+        section_heading("Customer Annoyance Level")
+        annoyance_counts = (
+            results["CustomerAnnoyanceLevel"]
+            .value_counts()
+            .sort_index()
+        )
+
+        st.bar_chart(
+            annoyance_counts,
+            x_label="Annoyance level",
+            y_label="Customers",
+        )
+
+    section_heading("Feature Importance")
+
+    importance = pd.DataFrame({
+        "Feature": FEATURES,
+        "Importance": model.feature_importances_,
+    }).sort_values(
+        "Importance",
+        ascending=False,
+    )
+
+    st.bar_chart(
+        importance.set_index("Feature"),
+        x_label="Feature",
+        y_label="Model importance",
+    )
+
+    st.caption(
+        "Feature importance indicates contribution to this fitted model; "
+        "it does not prove causation."
+    )
+
+    section_heading("Explore Records")
+
+    risk_filter = st.selectbox(
+        "Filter by risk category",
+        ["All", "High", "Medium", "Low"],
+    )
+
+    filtered_results = results.copy()
+
+    if risk_filter != "All":
+        filtered_results = filtered_results[
+            filtered_results["RiskLevel"] == risk_filter
+        ]
+
+    st.dataframe(
+        filtered_results[
             [
                 "CustomerID",
                 "CustomerName",
                 "MonthlyBilling",
-                "RiskScore",
-                "RevenueExposure"
+                "UsageTrendSpeed",
+                "CustomerAnnoyanceLevel",
+                "AutoRenewalTurnedOff",
+                "ChurnProbabilityPercent",
+                "RiskLevel",
             ]
-        ]
-        .head(10)
-        .rename(columns={
-            "CustomerID": "Customer ID",
-            "CustomerName": "Company Name",
-            "MonthlyBilling": "Monthly Billing (₹)",
-            "RiskScore": "Churn Risk (%)",
-            "RevenueExposure": "Estimated Revenue at Risk (₹)"
-        })
-        .reset_index(drop=True)
-    )
-
-    st.dataframe(
-        pipeline,
+        ],
         use_container_width=True,
-        hide_index=True
-    )
-
-    st.header("3. Customer Risk Distribution")
-
-    risk_groups = pd.cut(
-        df["RiskScore"],
-        bins=[-0.01, 30, 70, 100],
-        labels=["Low Risk", "Medium Risk", "High Risk"]
-    )
-
-    risk_counts = risk_groups.value_counts().reindex(
-        ["Low Risk", "Medium Risk", "High Risk"],
-        fill_value=0
-    )
-
-    st.bar_chart(risk_counts)
-
-    st.caption(
-        "Risk estimates are produced by a demonstration "
-        "model trained on synthetic data and rule-generated labels."
+        hide_index=True,
     )
 
 
-# =========================================================
-# 7. INDIVIDUAL CUSTOMER HEALTH AUDIT
-# =========================================================
-elif screen == "Individual Customer Health Audit":
+# ==================================================
+# PAGE 3: PREDICT CHURN
+# ==================================================
 
-    st.title("PREDICTIVE CHURN ANALYSER")
-    st.markdown("### Individual Customer Health Audit")
+elif page == "Predict Churn":
 
-    st.write(
-        "Select a customer to view their profile, behaviour, "
-        "churn risk, revenue exposure, and recommended actions."
-    )
-
-    st.sidebar.markdown("### CUSTOMER SELECTION")
-
-    search_id = st.sidebar.selectbox(
-        "Choose Customer ID",
-        df["CustomerID"].tolist()
-    )
-
-    customer_data = df.loc[
-        df["CustomerID"] == search_id
-    ].iloc[0]
-
-    prob = get_churn_probability(model, customer_data)
-    monthly_billing = float(
-        customer_data["MonthlyBilling"]
-    )
-    cash_exposed = prob * monthly_billing
-
-    # SECTION 1: CUSTOMER PROFILE
-    st.markdown("---")
-    st.header("1. Customer Profile")
-
-    profile_col1, profile_col2 = st.columns(2)
-
-    with profile_col1:
-        st.markdown("#### Basic Customer Information")
-
-        st.write(
-            f"**Customer ID:** {customer_data['CustomerID']}"
-        )
-        st.write(
-            f"**Company Name:** {customer_data['CustomerName']}"
-        )
-
-    with profile_col2:
-        st.markdown("#### Account Information")
-
-        st.write(
-            f"**Monthly Billing:** ₹ {monthly_billing:,.2f}"
-        )
-
-        renewal_status = (
-            "Disabled"
-            if int(customer_data["AutoRenewalTurnedOff"]) == 1
-            else "Enabled"
-        )
-
-        st.write(
-            f"**Automatic Renewal:** {renewal_status}"
-        )
-
-    # SECTION 2: CHURN RISK
-    st.markdown("---")
-    st.header("2. Churn Risk and Financial Summary")
-
-    risk_col1, risk_col2, risk_col3 = st.columns(3)
-
-    risk_col1.metric(
-        "Estimated Churn Risk",
-        f"{prob * 100:.1f}%"
-    )
-
-    risk_col2.metric(
-        "Monthly Revenue",
-        f"₹ {monthly_billing:,.2f}"
-    )
-
-    risk_col3.metric(
-        "Estimated Revenue at Risk",
-        f"₹ {cash_exposed:,.2f}"
-    )
-
-    if prob >= 0.7:
-        st.error(
-            "HIGH RISK: Prioritise a human review of this account."
-        )
-    elif prob >= 0.3:
-        st.warning(
-            "MEDIUM RISK: Monitor customer usage and feedback."
-        )
-    else:
-        st.success(
-            "LOW RISK: Continue regular customer engagement."
-        )
-
-    # SECTION 3: CUSTOMER BEHAVIOUR
-    st.markdown("---")
-    st.header("3. Customer Behaviour Analysis")
-
-    behaviour_col1, behaviour_col2 = st.columns(2)
-
-    with behaviour_col1:
-        st.markdown("#### A. Product Usage Details")
-
-        st.write(
-            f"**Past Historical Usage:** "
-            f"{customer_data['PastHistoricalUsage']:.2f}"
-        )
-
-        st.write(
-            f"**Current Recent Usage:** "
-            f"{customer_data['CurrentRecentUsage']:.2f}"
-        )
-
-        st.write(
-            f"**Usage Trend Speed:** "
-            f"{customer_data['UsageTrendSpeed']:.2f}"
-        )
-
-        st.caption(
-            "A lower usage trend indicates that recent usage "
-            "is lower relative to historical usage."
-        )
-
-    with behaviour_col2:
-        st.markdown("#### B. Customer Complaint Details")
-
-        st.write(
-            f"**Total Past Complaints:** "
-            f"{int(customer_data['TotalPastComplaints'])}"
-        )
-
-        st.write(
-            f"**Recent Weekly Complaints:** "
-            f"{int(customer_data['RecentWeeklyComplaints'])}"
-        )
-
-        st.write(
-            f"**Complaint Indicator:** "
-            f"{customer_data['CustomerAnnoyanceLevel']:.2f}"
-        )
-
-        st.caption(
-            "Review recent complaints and resolve outstanding issues."
-        )
-
-    # SECTION 4: RETENTION PROJECTION
-    st.markdown("---")
-    st.header("4. Illustrative 12-Month Retention Projection")
-
-    months = np.arange(1, 13)
-
-    staying_probability = [
-        max(
-            0.0,
-            min(1.0, (1.0 - prob) ** (month / 6))
-        )
-        for month in months
-    ]
-
-    projection = pd.DataFrame({
-        "Month": months,
-        "Illustrative Staying Probability": staying_probability
-    }).set_index("Month")
-
-    st.line_chart(projection)
-
-    st.caption(
-        "Illustrative curve only; it is not a trained survival "
-        "model or a validated forecast of future retention."
-    )
-
-    # SECTION 5: RETENTION PLAN
-    st.markdown("---")
-    st.header("5. Recommended Customer Retention Actions")
-
-    if float(customer_data["UsageTrendSpeed"]) < 0.6:
-
-        st.markdown("""
-        <div class="strategy-card">
-            <h4 style="color:#800000;">Priority: Declining Product Usage</h4>
-            <strong>Recommended Action:</strong>
-            Contact the customer to understand the decline. Offer a product
-            walkthrough, check for technical difficulties, and schedule a follow-up.
+    st.markdown(
+        """
+        <div class="hero">
+            <div class="hero-title">PREDICT CUSTOMER CHURN</div>
+            <div class="hero-subtitle">
+                Enter customer details to estimate the likelihood of churn.
+            </div>
         </div>
-        """, unsafe_allow_html=True)
-
-    elif float(
-        customer_data["CustomerAnnoyanceLevel"]
-    ) > 1.2:
-
-        st.markdown("""
-        <div class="strategy-card">
-            <h4 style="color:#800000;">Priority: Customer Complaints</h4>
-            <strong>Recommended Action:</strong>
-            Review unresolved complaints, assign a support contact, and
-            follow up after the issues have been addressed.
-        </div>
-        """, unsafe_allow_html=True)
-
-    elif int(customer_data["AutoRenewalTurnedOff"]) == 1:
-
-        st.markdown("""
-        <div class="strategy-card">
-            <h4 style="color:#800000;">Priority: Renewal Disabled</h4>
-            <strong>Recommended Action:</strong>
-            Ask about the customer's renewal preferences and explain
-            relevant options without applying pressure.
-        </div>
-        """, unsafe_allow_html=True)
-
-    else:
-
-        st.markdown("""
-        <div class="strategy-card">
-            <h4 style="color:#800000;">Priority: Regular Engagement</h4>
-            <strong>Recommended Action:</strong>
-            Continue regular communication, monitor usage trends, and
-            provide appropriate customer support.
-        </div>
-        """, unsafe_allow_html=True)
-
-
-# =========================================================
-# 8. ONBOARD NEW CUSTOMER ACCOUNT
-# =========================================================
-elif screen == "Onboard New Customer Account":
-
-    st.title("PREDICTIVE CHURN ANALYSER")
-    st.markdown("### New Customer Account Onboarding")
-
-    st.write(
-        "Enter the new customer's details to add an account "
-        "to this session and estimate its churn risk."
+        """,
+        unsafe_allow_html=True,
     )
 
-    with st.form("new_customer_form"):
+    section_heading("Customer Details")
 
-        st.subheader("A. Customer Information")
+    with st.form("prediction_form"):
 
         customer_name = st.text_input(
-            "Customer / Company Name",
-            placeholder="Enter company name"
+            "Customer name",
+            value="New Customer",
         )
 
         monthly_billing = st.number_input(
-            "Monthly Billing (₹)",
+            "Monthly billing (₹)",
             min_value=0.0,
-            value=10000.0,
-            step=500.0
+            value=1500.0,
+            step=100.0,
         )
 
-        st.subheader("B. Product Usage Details")
-
-        past_usage = st.slider(
-            "Past Historical Usage",
-            min_value=1.0,
-            max_value=100.0,
-            value=75.0
+        usage_trend = st.slider(
+            "Usage trend speed",
+            min_value=-1.0,
+            max_value=1.0,
+            value=0.0,
+            step=0.05,
+            help="Negative values indicate declining usage in this demo.",
         )
 
-        current_usage = st.slider(
-            "Current Recent Usage",
-            min_value=0.0,
-            max_value=100.0,
-            value=60.0
+        annoyance = st.slider(
+            "Customer annoyance level",
+            min_value=1,
+            max_value=10,
+            value=5,
+            step=1,
         )
 
-        st.subheader("C. Customer Support Details")
-
-        past_complaints = st.number_input(
-            "Total Past Complaints",
-            min_value=0,
-            value=2,
-            step=1
-        )
-
-        weekly_complaints = st.number_input(
-            "Recent Weekly Complaints",
-            min_value=0,
-            value=1,
-            step=1
-        )
-
-        st.subheader("D. Renewal Preferences")
-
-        renewal_off = st.selectbox(
-            "Is Automatic Renewal Turned Off?",
-            ["No", "Yes"]
+        auto_renewal_off = st.selectbox(
+            "Has the customer turned off auto-renewal?",
+            options=[0, 1],
+            format_func=lambda value: "Yes" if value == 1 else "No",
         )
 
         submitted = st.form_submit_button(
-            "Add Customer and Estimate Risk",
-            use_container_width=True
+            "Predict Churn Risk",
+            use_container_width=True,
         )
 
     if submitted:
 
-        if not customer_name.strip():
-            st.error(
-                "Please enter a customer or company name."
+        new_customer = pd.DataFrame([{
+            "MonthlyBilling": monthly_billing,
+            "UsageTrendSpeed": usage_trend,
+            "CustomerAnnoyanceLevel": annoyance,
+            "AutoRenewalTurnedOff": auto_renewal_off,
+        }])
+
+        churn_index = list(model.classes_).index(1)
+
+        probability = float(
+            model.predict_proba(new_customer)[0][churn_index]
+        )
+
+        risk_level = (
+            "High" if probability >= 0.65
+            else "Medium" if probability >= 0.35
+            else "Low"
+        )
+
+        result_col, action_col = st.columns(2)
+
+        with result_col:
+            section_heading("Prediction Result")
+
+            st.metric(
+                "Estimated Churn Probability",
+                f"{probability * 100:.1f}%",
             )
 
-        elif monthly_billing <= 0:
-            st.error(
-                "Monthly billing must be greater than zero."
+            st.progress(
+                min(max(probability, 0.0), 1.0)
             )
 
-        else:
-            existing_numbers = []
+            if risk_level == "High":
+                st.error(f"Risk category: {risk_level}")
+            elif risk_level == "Medium":
+                st.warning(f"Risk category: {risk_level}")
+            else:
+                st.success(f"Risk category: {risk_level}")
 
-            for customer_id in (
-                st.session_state.customer_db["CustomerID"]
-            ):
-                try:
-                    existing_numbers.append(
-                        int(customer_id.split("-")[1])
-                    )
-                except (IndexError, ValueError):
-                    continue
+        with action_col:
+            section_heading("Suggested Next Step")
 
-            next_number = max(
-                existing_numbers,
-                default=999
-            ) + 1
+            new_row = pd.Series({
+                "MonthlyBilling": monthly_billing,
+                "UsageTrendSpeed": usage_trend,
+                "CustomerAnnoyanceLevel": annoyance,
+                "AutoRenewalTurnedOff": auto_renewal_off,
+            })
 
-            new_id = f"CUST-{next_number}"
+            st.write(retention_action(new_row))
 
-            renewal_value = (
-                1 if renewal_off == "Yes" else 0
+        st.caption(
+            "This prediction uses the current fitted model. Demo data "
+            "or rule-generated labels are not a validated business forecast."
+        )
+
+
+# ==================================================
+# PAGE 4: CUSTOMER RECORDS
+# ==================================================
+
+elif page == "Customer Records":
+
+    st.markdown(
+        """
+        <div class="hero">
+            <div class="hero-title">CUSTOMER RECORDS</div>
+            <div class="hero-subtitle">
+                Review and export customer details with their estimated risk.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    section_heading("Customer Details Dashboard")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        search_text = st.text_input(
+            "Search by customer ID or name",
+            placeholder="Enter a customer ID or name",
+        )
+
+    with col2:
+        selected_risk = st.selectbox(
+            "Select risk level",
+            ["All", "High", "Medium", "Low"],
+        )
+
+    records = results.copy()
+
+    records["SuggestedAction"] = records.apply(
+        retention_action,
+        axis=1,
+    )
+
+    if search_text.strip():
+        term = search_text.strip().lower()
+
+        records = records[
+            records["CustomerID"]
+            .astype(str)
+            .str.lower()
+            .str.contains(term, na=False)
+            |
+            records["CustomerName"]
+            .astype(str)
+            .str.lower()
+            .str.contains(term, na=False)
+        ]
+
+    if selected_risk != "All":
+        records = records[
+            records["RiskLevel"] == selected_risk
+        ]
+
+    visible_columns = [
+        "CustomerID",
+        "CustomerName",
+        "MonthlyBilling",
+        "UsageTrendSpeed",
+        "CustomerAnnoyanceLevel",
+        "AutoRenewalTurnedOff",
+        "ChurnProbabilityPercent",
+        "RiskLevel",
+        "SuggestedAction",
+    ]
+
+    st.dataframe(
+        records[visible_columns],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.download_button(
+        "Download filtered customer records",
+        data=records[visible_columns].to_csv(
+            index=False
+        ).encode("utf-8"),
+        file_name="customer_churn_records.csv",
+        mime="text/csv",
+    )
+
+
+# ==================================================
+# PAGE 5: AI RETENTION STRATEGY
+# ==================================================
+
+elif page == "AI Retention Strategy":
+
+    st.markdown(
+        """
+        <div class="hero">
+            <div class="hero-title">AI RETENTION STRATEGY</div>
+            <div class="hero-subtitle">
+                Generate personalised actions to help retain at-risk customers.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    section_heading("Choose a Customer")
+
+    customer_options = results[
+        [
+            "CustomerID",
+            "CustomerName",
+            "RiskLevel",
+            "ChurnProbabilityPercent",
+        ]
+    ].copy()
+
+    customer_options["Display"] = customer_options.apply(
+        lambda row: (
+            f"{row['CustomerID']} | {row['CustomerName']} | "
+            f"{row['RiskLevel']} risk | "
+            f"{row['ChurnProbabilityPercent']:.1f}%"
+        ),
+        axis=1,
+    )
+
+    selected_display = st.selectbox(
+        "Customer ID, name and risk",
+        customer_options["Display"].tolist(),
+    )
+
+    selected_id = customer_options.loc[
+        customer_options["Display"] == selected_display,
+        "CustomerID",
+    ].iloc[0]
+
+    customer = results[
+        results["CustomerID"].astype(str) == str(selected_id)
+    ].iloc[0]
+
+    risk_col, billing_col, renewal_col = st.columns(3)
+
+    with risk_col:
+        metric_card(
+            "Churn Probability",
+            f"{customer['ChurnProbabilityPercent']:.1f}%",
+        )
+
+    with billing_col:
+        metric_card(
+            "Monthly Billing",
+            f"{CURRENCY}{customer['MonthlyBilling']:,.2f}",
+        )
+
+    with renewal_col:
+        metric_card(
+            "Risk Category",
+            str(customer["RiskLevel"]),
+        )
+
+    signals = []
+
+    if customer["UsageTrendSpeed"] < -0.25:
+        signals.append("Usage trend is declining.")
+
+    if customer["AutoRenewalTurnedOff"] == 1:
+        signals.append("Auto-renewal has been turned off.")
+
+    if customer["CustomerAnnoyanceLevel"] >= 7:
+        signals.append("Customer annoyance level is high.")
+
+    if customer["MonthlyBilling"] > 3500:
+        signals.append(
+            "Monthly billing is relatively high; check perceived plan value."
+        )
+
+    section_heading("Customer Signals")
+
+    if signals:
+        for signal in signals:
+            st.write(f"• {signal}")
+    else:
+        st.write(
+            "No major warning signals were identified by the simple rules."
+        )
+
+    st.caption(
+        "Signals are based on supplied columns and simple thresholds; "
+        "review them alongside real customer feedback."
+    )
+
+    if st.button(
+        "Generate Retention Strategy",
+        use_container_width=True,
+    ):
+
+        with st.spinner("Preparing a personalised retention plan..."):
+            strategy_text, strategy_source = generate_ai_strategy(
+                customer,
+                signals,
             )
 
-            usage_speed = (
-                current_usage / (past_usage + 1)
-            )
+        st.session_state["strategy_text"] = strategy_text
+        st.session_state["strategy_source"] = strategy_source
+        st.session_state["strategy_customer_id"] = str(selected_id)
 
-            annoyance = (
-                weekly_complaints - past_complaints / 4
-            )
+    if (
+        st.session_state.get("strategy_text")
+        and st.session_state.get("strategy_customer_id") == str(selected_id)
+    ):
 
-            leaving_soon = int(
-                (usage_speed < 0.5)
-                or (renewal_value == 1)
-                or (annoyance > 1.2)
-            )
+        section_heading("Recommended Retention Plan")
 
-            new_customer = {
-                "CustomerID": new_id,
-                "CustomerName": customer_name.strip(),
-                "MonthlyBilling": float(monthly_billing),
-                "PastHistoricalUsage": float(past_usage),
-                "CurrentRecentUsage": float(current_usage),
-                "TotalPastComplaints": int(past_complaints),
-                "RecentWeeklyComplaints": int(weekly_complaints),
-                "AutoRenewalTurnedOff": renewal_value,
-                "UsageTrendSpeed": round(usage_speed, 2),
-                "CustomerAnnoyanceLevel": round(annoyance, 2),
-                "LeavingSoon": leaving_soon
-            }
+        st.caption(
+            "Strategy generated using: "
+            f"{st.session_state.get('strategy_source', 'Unknown')}"
+        )
 
-            # Add the customer to the session database.
-            st.session_state.customer_db = pd.concat(
-                [
-                    st.session_state.customer_db,
-                    pd.DataFrame([new_customer])
-                ],
-                ignore_index=True
-            )
+        st.markdown(
+            st.session_state["strategy_text"]
+        )
 
-            # Retrain using the updated session data.
-            df = st.session_state.customer_db.copy()
-            model = train_model(df)
+        st.download_button(
+            "Download Retention Strategy",
+            data=st.session_state["strategy_text"],
+            file_name=f"retention_strategy_{selected_id}.md",
+            mime="text/markdown",
+        )
 
-            new_probability = get_churn_probability(
-                model,
-                new_customer
-            )
+    elif st.session_state.get("strategy_text"):
+        st.info(
+            "Select the customer and click Generate Retention Strategy "
+            "to create a plan for that customer."
+        )
 
-            st.success(
-                f"Customer {new_id} was added to this session."
-            )
-
-            result_col1, result_col2 = st.columns(2)
-
-            result_col1.metric(
-                "New Customer ID",
-                new_id
-            )
-
-            result_col2.metric(
-                "Estimated Churn Risk",
-                f"{new_probability * 100:.1f}%"
-            )
-
-            st.info(
-                "This customer is stored in the current Streamlit "
-                "session. For permanent storage, connect a database "
-                "such as Supabase."
-            )
+    with st.expander("How does this feature work?"):
+        st.write(
+            "The app checks customer signals and churn probability. "
+            "If Groq is installed and GROQ_API_KEY is configured, it "
+            "requests a tailored plan from the AI model. Otherwise, "
+            "it generates a rule-based fallback plan."
+        )
 
 
-# =========================================================
-# 9. FOOTER AND MODEL LIMITATION
-# =========================================================
-st.markdown("---")
+# ==================================================
+# FOOTER
+# ==================================================
 
-st.caption(
-    "Prototype note: Customer data is synthetic and churn labels "
-    "are generated from simple rules. Risk scores and revenue exposure "
-    "are illustrative, not validated real-world forecasts. Test with "
-    "genuine historical data before using the model for business decisions."
+st.markdown(
+    """
+    <div class="footer">
+        Predictive Churn Analyser · Customer Analytics & Retention
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
